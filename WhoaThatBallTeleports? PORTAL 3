@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>throw circle - portal pair</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: black; overflow: hidden; touch-action: none; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+  <script>
+    const c = document.getElementById('c');
+    const ctx = c.getContext('2d');
+    const R = 32, G = 980, B = 0.72, F = 0.94;
+    let x, y, vx = 0, vy = 0, drag = false, dx, dy, px, py, pt, buf = [];
+    
+    const PORTAL_WIDTH = 8;
+    const PORTAL_HEIGHT = R * 5;
+    
+    let portal1 = { x: 0, y: 0, w: PORTAL_WIDTH, h: PORTAL_HEIGHT, color: '#FF8C00', glowColor: 'rgba(255, 140, 0, 0.8)' };
+    let portal2 = { x: 0, y: 0, w: PORTAL_WIDTH, h: PORTAL_HEIGHT, color: '#4169E1', glowColor: 'rgba(65, 105, 225, 0.8)' };
+    let portalPulse = 0;
+    let insidePortal = null;
+
+    function resize() {
+      c.width = innerWidth;
+      c.height = innerHeight;
+      x = c.width / 2;
+      y = c.height / 2;
+      
+      portal1.x = c.width * 0.3 - PORTAL_WIDTH / 2;
+      portal1.y = c.height * 0.3 - PORTAL_HEIGHT / 2;
+      portal2.x = c.width * 0.7 - PORTAL_WIDTH / 2;
+      portal2.y = c.height * 0.3 - PORTAL_HEIGHT / 2;
+    }
+
+    function ballCenterInPortal(bx, by, portal) {
+      // Ball center must be vertically within the portal
+      return by > portal.y + R && by < portal.y + portal.h - R &&
+             bx + R > portal.x && bx - R < portal.x + portal.w;
+    }
+
+    function getEntrySide(portal, ballX) {
+      const portalCenter = portal.x + portal.w / 2;
+      if (ballX < portalCenter) return 'left';
+      return 'right';
+    }
+
+    function phys(dt) {
+      dt = Math.min(dt, 0.05);
+      vy += G * dt;
+      
+      let newX = x + vx * dt;
+      let newY = y + vy * dt;
+      
+      // Only warp when ball center is properly inside portal vertically
+      if (!insidePortal) {
+        if (ballCenterInPortal(newX, newY, portal1)) {
+          insidePortal = { portal: 'portal1', side: getEntrySide(portal1, x) };
+          const relX = (newX - portal1.x) / portal1.w;
+          const relY = (newY - portal1.y) / portal1.h;
+          newX = portal2.x + relX * portal2.w;
+          newY = portal2.y + relY * portal2.h;
+        }
+        else if (ballCenterInPortal(newX, newY, portal2)) {
+          insidePortal = { portal: 'portal2', side: getEntrySide(portal2, x) };
+          const relX = (newX - portal2.x) / portal2.w;
+          const relY = (newY - portal2.y) / portal2.h;
+          newX = portal1.x + relX * portal1.w;
+          newY = portal1.y + relY * portal1.h;
+        }
+      }
+      
+      // Check if exited portals
+      if (insidePortal) {
+        const exitPortal = insidePortal.portal === 'portal1' ? portal2 : portal1;
+        if (!ballCenterInPortal(newX, newY, exitPortal) && 
+            !(newX + R > exitPortal.x && newX - R < exitPortal.x + exitPortal.w &&
+              newY + R > exitPortal.y && newY - R < exitPortal.y + exitPortal.h)) {
+          insidePortal = null;
+        }
+      }
+      
+      x = newX;
+      y = newY;
+      
+      // Wall bouncing
+      if (x < R) { x = R; vx *= -B; }
+      if (x > c.width - R) { x = c.width - R; vx *= -B; }
+      if (y < R) { y = R; vy *= -B; }
+      if (y > c.height - R) {
+        y = c.height - R;
+        vy *= -B;
+        if (Math.abs(vy) < 60) vx *= F;
+      }
+      
+      if (Math.abs(vx) < 0.1) vx = 0;
+      if (Math.abs(vy) < 0.1) vy = 0;
+    }
+
+    function drawPortal(portal) {
+      // Draw portal frame (top and bottom barriers)
+      ctx.save();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+      ctx.fillRect(portal.x - 15, portal.y - 15, portal.w + 30, 15);
+      ctx.fillRect(portal.x - 15, portal.y + portal.h, portal.w + 30, 15);
+      ctx.restore();
+      
+      // Draw actual portal
+      ctx.save();
+      ctx.shadowColor = portal.glowColor;
+      ctx.shadowBlur = 12 + Math.sin(portalPulse) * 3;
+      ctx.fillStyle = portal.color === '#FF8C00' ? 
+        `rgba(255, 140, 0, ${0.6 + Math.sin(portalPulse) * 0.2})` :
+        `rgba(65, 105, 225, ${0.6 + Math.sin(portalPulse) * 0.2})`;
+      ctx.fillRect(portal.x, portal.y, portal.w, portal.h);
+      ctx.strokeStyle = portal.color;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(portal.x, portal.y, portal.w, portal.h);
+      ctx.restore();
+    }
+
+    function drawBallFull(xPos, yPos) {
+      ctx.save();
+      ctx.shadowColor = 'rgba(255,255,255,0.25)';
+      ctx.shadowBlur = 14;
+      ctx.beginPath();
+      ctx.arc(xPos, yPos, R, 0, Math.PI * 2);
+      ctx.fillStyle = 'white';
+      ctx.fill();
+      ctx.restore();
+      
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(xPos, yPos, R, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawBallClippedEntrySide(xPos, yPos, portal, side) {
+      ctx.save();
+      ctx.beginPath();
+      if (side === 'left') {
+        ctx.rect(0, 0, portal.x, c.height);
+      } else {
+        ctx.rect(portal.x + portal.w, 0, c.width - portal.x - portal.w, c.height);
+      }
+      ctx.clip();
+      
+      ctx.shadowColor = 'rgba(255,255,255,0.25)';
+      ctx.shadowBlur = 14;
+      ctx.beginPath();
+      ctx.arc(xPos, yPos, R, 0, Math.PI * 2);
+      ctx.fillStyle = 'white';
+      ctx.fill();
+      ctx.restore();
+      
+      ctx.save();
+      ctx.beginPath();
+      if (side === 'left') {
+        ctx.rect(0, 0, portal.x, c.height);
+      } else {
+        ctx.rect(portal.x + portal.w, 0, c.width - portal.x - portal.w, c.height);
+      }
+      ctx.clip();
+      
+      ctx.beginPath();
+      ctx.arc(xPos, yPos, R, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawBallClippedExitSide(xPos, yPos, portal, side) {
+      ctx.save();
+      ctx.beginPath();
+      if (side === 'left') {
+        ctx.rect(portal.x + portal.w, 0, c.width - portal.x - portal.w, c.height);
+      } else {
+        ctx.rect(0, 0, portal.x, c.height);
+      }
+      ctx.clip();
+      
+      ctx.shadowColor = 'rgba(255,255,255,0.25)';
+      ctx.shadowBlur = 14;
+      ctx.beginPath();
+      ctx.arc(xPos, yPos, R, 0, Math.PI * 2);
+      ctx.fillStyle = 'white';
+      ctx.fill();
+      ctx.restore();
+      
+      ctx.save();
+      ctx.beginPath();
+      if (side === 'left') {
+        ctx.rect(portal.x + portal.w, 0, c.width - portal.x - portal.w, c.height);
+      } else {
+        ctx.rect(0, 0, portal.x, c.height);
+      }
+      ctx.clip();
+      
+      ctx.beginPath();
+      ctx.arc(xPos, yPos, R, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 2.2;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, c.width, c.height);
+      portalPulse += 0.05;
+      
+      drawPortal(portal1);
+      drawPortal(portal2);
+      
+      if (insidePortal && insidePortal.portal === 'portal1') {
+        const relX = (x - portal2.x) / portal2.w;
+        const relY = (y - portal2.y) / portal2.h;
+        const ghostX = portal1.x + relX * portal1.w;
+        const ghostY = portal1.y + relY * portal1.h;
+        
+        drawBallClippedEntrySide(ghostX, ghostY, portal1, insidePortal.side);
+        drawBallClippedExitSide(x, y, portal2, insidePortal.side);
+        
+      } else if (insidePortal && insidePortal.portal === 'portal2') {
+        const relX = (x - portal1.x) / portal1.w;
+        const relY = (y - portal1.y) / portal1.h;
+        const ghostX = portal2.x + relX * portal2.w;
+        const ghostY = portal2.y + relY * portal2.h;
+        
+        drawBallClippedEntrySide(ghostX, ghostY, portal2, insidePortal.side);
+        drawBallClippedExitSide(x, y, portal1, insidePortal.side);
+        
+      } else {
+        drawBallFull(x, y);
+      }
+    }
+
+    function loop(t) {
+      const dt = loop.prev ? (t - loop.prev) / 1000 : 0;
+      loop.prev = t;
+      if (dt > 0 && !drag) phys(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+    loop.prev = 0;
+
+    function pos(e) {
+      const r = c.getBoundingClientRect();
+      const t = e.touches ? e.touches[0] : e;
+      return { x: (t.clientX - r.left) * (c.width / r.width), y: (t.clientY - r.top) * (c.height / r.height) };
+    }
+
+    c.addEventListener('pointerdown', e => {
+      const p = pos(e);
+      let minDist = (p.x - x) ** 2 + (p.y - y) ** 2;
+      let targetX = x, targetY = y;
+      
+      if (insidePortal && insidePortal.portal === 'portal1') {
+        const relX = (x - portal2.x) / portal2.w;
+        const relY = (y - portal2.y) / portal2.h;
+        const ghostX = portal1.x + relX * portal1.w;
+        const ghostY = portal1.y + relY * portal1.h;
+        const ghostDist = (p.x - ghostX) ** 2 + (p.y - ghostY) ** 2;
+        if (ghostDist < minDist) {
+          minDist = ghostDist;
+          targetX = ghostX;
+          targetY = ghostY;
+          insidePortal = null;
+        }
+      } else if (insidePortal && insidePortal.portal === 'portal2') {
+        const relX = (x - portal1.x) / portal1.w;
+        const relY = (y - portal1.y) / portal1.h;
+        const ghostX = portal2.x + relX * portal2.w;
+        const ghostY = portal2.y + relY * portal2.h;
+        const ghostDist = (p.x - ghostX) ** 2 + (p.y - ghostY) ** 2;
+        if (ghostDist < minDist) {
+          minDist = ghostDist;
+          targetX = ghostX;
+          targetY = ghostY;
+          insidePortal = null;
+        }
+      }
+      
+      if (minDist <= R ** 2) {
+        drag = true;
+        x = targetX;
+        y = targetY;
+        dx = p.x - x;
+        dy = p.y - y;
+        px = p.x;
+        py = p.y;
+        pt = performance.now();
+        vx = vy = 0;
+        buf = [];
+        c.setPointerCapture(e.pointerId);
+      }
+    });
+
+    c.addEventListener('pointermove', e => {
+      if (!drag) return;
+      const p = pos(e);
+      const n = performance.now();
+      const dt = (n - pt) / 1000;
+      if (dt > 0.001) {
+        buf.push({ vx: (p.x - px) / dt, vy: (p.y - py) / dt, t: n });
+        buf = buf.filter(v => v.t > n - 150);
+      }
+      
+      let newX = p.x - dx;
+      let newY = p.y - dy;
+      
+      if (!insidePortal) {
+        if (ballCenterInPortal(newX, newY, portal1)) {
+          insidePortal = { portal: 'portal1', side: getEntrySide(portal1, x) };
+          const relX = (newX - portal1.x) / portal1.w;
+          const relY = (newY - portal1.y) / portal1.h;
+          x = portal2.x + relX * portal2.w;
+          y = portal2.y + relY * portal2.h;
+          dx = p.x - x;
+          dy = p.y - y;
+        } else if (ballCenterInPortal(newX, newY, portal2)) {
+          insidePortal = { portal: 'portal2', side: getEntrySide(portal2, x) };
+          const relX = (newX - portal2.x) / portal2.w;
+          const relY = (newY - portal2.y) / portal2.h;
+          x = portal1.x + relX * portal1.w;
+          y = portal1.y + relY * portal1.h;
+          dx = p.x - x;
+          dy = p.y - y;
+        } else {
+          x = newX;
+          y = newY;
+        }
+      } else {
+        x = newX;
+        y = newY;
+        const exitPortal = insidePortal.portal === 'portal1' ? portal2 : portal1;
+        if (!(x + R > exitPortal.x && x - R < exitPortal.x + exitPortal.w &&
+              y + R > exitPortal.y && y - R < exitPortal.y + exitPortal.h)) {
+          insidePortal = null;
+        }
+      }
+      
+      px = p.x;
+      py = p.y;
+      pt = n;
+    });
+
+    c.addEventListener('pointerup', e => {
+      if (!drag) return;
+      drag = false;
+      c.releasePointerCapture(e.pointerId);
+      buf = buf.filter(v => v.t > performance.now() - 150);
+      if (buf.length) {
+        let b = buf[0], s = b.vx ** 2 + b.vy ** 2;
+        buf.forEach(v => { const sp = v.vx ** 2 + v.vy ** 2; if (sp > s) { s = sp; b = v; } });
+        vx = b.vx;
+        vy = b.vy;
+      }
+    });
+
+    c.addEventListener('pointercancel', e => {
+      drag = false;
+      c.releasePointerCapture(e.pointerId);
+    });
+
+    addEventListener('resize', resize);
+    resize();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
